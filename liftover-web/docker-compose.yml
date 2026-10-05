@@ -1,21 +1,13 @@
-services:
-  liftover-web:
-    build: .
-    image: liftover-web:1.0.0
-    container_name: liftover-web
-    # 宿主机端口可用环境变量 LIFTOVER_PORT 覆盖，默认 8080
-    ports:
-      - "${LIFTOVER_PORT:-8080}:8080"
-    environment:
-      # 单文件上传上限（MB）
-      LIFTOVER_MAX_UPLOAD_MB: "${LIFTOVER_MAX_UPLOAD_MB:-50}"
-      # 转换结果在内存中的保留时长（秒）
-      LIFTOVER_JOB_TTL_SECONDS: "${LIFTOVER_JOB_TTL_SECONDS:-3600}"
-      # 内存中同时保留的结果任务上限
-      LIFTOVER_MAX_JOBS: "${LIFTOVER_MAX_JOBS:-100}"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+# 完整服务定义见同目录 service.yml（build context 锚定该文件所在目录）。
+#
+# 两种入口都能构建、启动同一个应用：
+#   1) 进入本目录直接运行：docker compose up -d --build
+#      （项目目录即本目录，include 取默认相对路径 service.yml）
+#   2) 在外层目录以本文件启动（项目目录是上一级）：
+#      docker compose -f liftover-web/docker-compose.yml up -d --build
+#      此时由外层已提交的 .env 将 LIFTOVER_WEB_INCLUDE 覆盖为
+#      liftover-web/service.yml，include 仍能定位到本片段。
+#
+# 需要 Docker Compose v2.20+（include 支持）。
+include:
+  - ${LIFTOVER_WEB_INCLUDE:-service.yml}
