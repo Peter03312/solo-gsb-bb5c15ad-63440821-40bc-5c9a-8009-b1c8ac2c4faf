@@ -15,29 +15,57 @@
 ## 目录结构
 
 ```
-liftover-web/
-├── app/                  # 后端
-│   ├── bed.py            # BED 解析（零基左闭右开，错误带行号）
-│   ├── chain.py          # UCSC chain 解析（严格校验，错误带行号）
-│   ├── engine.py         # 区间转换引擎（缺口拆分 / 歧义 / 负链）
-│   ├── report.py         # TSV 导出与预览 JSON
-│   └── main.py           # FastAPI 入口
-├── static/               # 前端（纯本地资源）
-├── examples/             # 可直接试用的 BED / chain 示例
-├── tests/                # pytest 测试（26 个用例）
-├── scripts/init.sh       # 本地开发依赖初始化
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── requirements.txt      # 运行依赖
-└── requirements-dev.txt  # 运行 + 测试依赖
+<交付外层目录>/
+├── Dockerfile            # 方式 A 构建入口：以外层目录为上下文（COPY liftover-web/...）
+├── .dockerignore         # 外层构建上下文排除规则
+└── liftover-web/
+    ├── app/                  # 后端
+    │   ├── bed.py            # BED 解析（零基左闭右开，错误带行号）
+    │   ├── chain.py          # UCSC chain 解析（严格校验，错误带行号）
+    │   ├── engine.py         # 区间转换引擎（缺口拆分 / 歧义 / 负链）
+    │   ├── report.py         # TSV 导出与预览 JSON
+    │   └── main.py           # FastAPI 入口
+    ├── static/               # 前端（纯本地资源）
+    ├── examples/             # 可直接试用的 BED / chain 示例
+    ├── tests/                # pytest 测试（26 个用例）
+    ├── scripts/init.sh       # 本地开发依赖初始化
+    ├── Dockerfile            # 方式 B 构建入口：以本目录为上下文
+    ├── docker-compose.yml    # 两种启动方式共用
+    ├── .env.example
+    ├── requirements.txt      # 运行依赖
+    └── requirements-dev.txt  # 运行 + 测试依赖
 ```
 
 ---
 
 ## 一、Docker / Compose 启动（推荐，完全离线）
 
-镜像在构建时安装全部 Python 依赖，运行阶段不需要访问外网。
+镜像在构建时安装全部 Python 依赖，运行阶段不需要访问外网。下面两种
+入口构建的是**同一个镜像** `liftover-web:1.0.0`：应用代码与静态资源
+全部打进镜像，缺少任一构建必需文件（`requirements.txt`、`app/`、
+`static/`）时构建直接失败，不会启动缺少资源却显示健康的容器。
+
+### 方式 A：在外层目录一键启动
+
+在交付外层目录直接指定 `liftover-web/docker-compose.yml`，并以外层
+目录为 Compose 项目目录：
+
+```bash
+# 构建并后台启动
+docker compose --project-directory . -f liftover-web/docker-compose.yml up -d --build
+
+# 查看状态 / 日志
+docker compose --project-directory . -f liftover-web/docker-compose.yml ps
+docker compose --project-directory . -f liftover-web/docker-compose.yml logs -f
+
+# 停止
+docker compose --project-directory . -f liftover-web/docker-compose.yml down
+```
+
+此时构建上下文是外层目录，使用外层目录下的 `Dockerfile`（COPY 源路径
+带 `liftover-web/` 前缀）。
+
+### 方式 B：进入 liftover-web 目录启动
 
 ```bash
 cd liftover-web
@@ -48,22 +76,23 @@ docker compose up -d --build
 # 查看状态 / 日志
 docker compose ps
 docker compose logs -f
+
+# 停止
+docker compose down
 ```
 
-访问地址：
+此时构建上下文是 `liftover-web/` 目录，使用该目录下的 `Dockerfile`。
+两份 Dockerfile 仅 COPY 源路径前缀不同，构建产物一致。
+
+访问地址（两种方式相同）：
 
 - **http://localhost:8080** （应用页面）
 - 健康检查：`http://localhost:8080/healthz`
 
-停止：
-
-```bash
-docker compose down
-```
-
 ### 端口与配置
 
-复制环境变量模板并按需修改：
+复制环境变量模板并按需修改（方式 B 在 `liftover-web/` 内执行；方式 A
+可将 `.env` 放在外层目录，或直接在命令行注入变量）：
 
 ```bash
 cp .env.example .env
@@ -76,13 +105,26 @@ cp .env.example .env
 | `LIFTOVER_JOB_TTL_SECONDS` | `3600` | 转换结果在内存中的保留时长（秒） |
 | `LIFTOVER_MAX_JOBS` | `100` | 内存中同时保留的结果任务数量上限 |
 
-改端口示例：`LIFTOVER_PORT=9000 docker compose up -d`，随后访问
-`http://localhost:9000`。
+改端口示例（两种入口写法都列出来）：
+
+```bash
+# 方式 A（外层目录）
+LIFTOVER_PORT=9000 docker compose --project-directory . -f liftover-web/docker-compose.yml up -d
+
+# 方式 B（liftover-web/ 内）
+LIFTOVER_PORT=9000 docker compose up -d
+```
+
+随后访问 `http://localhost:9000`。
 
 不用 Compose 时：
 
 ```bash
+# 在 liftover-web/ 内构建
 docker build -t liftover-web:1.0.0 .
+# 或在外层目录构建（等价）
+docker build -f Dockerfile -t liftover-web:1.0.0 .
+
 docker run -d --name liftover-web -p 8080:8080 \
   -e LIFTOVER_MAX_UPLOAD_MB=100 \
   liftover-web:1.0.0
@@ -164,7 +206,75 @@ fragment_index, src_start, src_end, dest_start, dest_end, reason
 
 ---
 
-## 四、快速试用
+## 四、HTTP API 调用示例
+
+页面的全部功能都通过以下 HTTP 接口完成（端口以 `LIFTOVER_PORT` 为准，
+默认 8080；示例中的文件路径按方式 A 的外层目录给出，方式 B 下去掉
+`liftover-web/` 前缀即可）。
+
+### 健康检查
+
+```bash
+curl http://localhost:8080/healthz
+# {"status":"ok"}
+```
+
+### 上传并转换（预览）
+
+`POST /api/liftover`，`multipart/form-data`，字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `bed` | 文件 | BED 文件（零基左闭右开） |
+| `chain` | 文件 | UCSC chain 文件 |
+| `side` | 文本 | `target`（target → query）或 `query`（query → target） |
+
+```bash
+curl -s -X POST http://localhost:8080/api/liftover \
+  -F "bed=@liftover-web/examples/example_target.bed" \
+  -F "chain=@liftover-web/examples/demo.chain" \
+  -F "side=target"
+```
+
+成功（200）返回预览与下载令牌：
+
+```json
+{
+  "download_token": "……",
+  "download_name": "liftover_target_to_query_20261005-120000.tsv",
+  "preview": {
+    "total": 6,
+    "counts": {"mapped": 1, "partial": 1, "ambiguous": 1, "unmapped": 3},
+    "rows": []
+  }
+}
+```
+
+输入校验失败（400）只返回带行号的错误列表，**不会**产生任何可下载
+文件：
+
+```json
+{"errors": ["BED 第 3 行：……", "……"]}
+```
+
+### 下载结果 TSV
+
+`GET /api/download/{download_token}`。token 来自上一步响应，只在转换
+完全成功后才存在，且结果只保存在服务进程内存中：
+
+```bash
+TOKEN=<上一步返回的 download_token>
+curl -OJ "http://localhost:8080/api/download/${TOKEN}"
+```
+
+- 成功（200）：`text/tab-separated-values`（UTF-8 带 BOM），
+  `Content-Disposition` 携带上一步返回的 `download_name` 文件名；
+- token 不存在或已过期（404）：
+  `{"errors": ["结果不存在或已过期，请重新提交转换"]}`。
+
+---
+
+## 五、快速试用
 
 ```bash
 # 页面上分别选择：
@@ -180,7 +290,7 @@ fragment_index, src_start, src_end, dest_start, dest_end, reason
 
 ---
 
-## 五、离线部署说明
+## 六、离线部署说明
 
 - 前端资源全部由本服务在 `/static/` 下提供，页面不含任何外部字体、
   脚本或样式表；
